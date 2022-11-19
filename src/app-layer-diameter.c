@@ -82,20 +82,10 @@ SCEnumCharMap diameter_decoder_event_table[] = {
 //     }
 //     return result[point];
 // }
-DiameterMessage ReadDiameterHeaderData(const uint8_t *data, uint32_t data_len) {
-    DiameterMessage message;
-    if (data_len < 20) return message;
-    message.Version = data[0];
-    message.Length = data[1]*256*256 + data[2]*256 + data[3];
-    message.Flags = data[4];
-    message.CommandCode = data[5]*256*256 + data[6]*256 + data[7];
-    message.ApplicationId = data[8]*256*256*256 + data[9]*256*256 + data[10]*256 + data[11];
-    message.HopbyHopId = data[12]*256*256*256 + data[13]*256*256 + data[14]*256 + data[15];
-    message.EndtoEndId = data[16]*256*256*256 + data[17]*256*256 + data[18]*256 + data[19];
-    return message;
-}
 
-/*
+
+
+
 static DiameterTransaction *DiameterTxAlloc(DiameterState *state)
 {
     DiameterTransaction *tx = SCCalloc(1, sizeof(DiameterTransaction));
@@ -104,26 +94,30 @@ static DiameterTransaction *DiameterTxAlloc(DiameterState *state)
     }
 
     // Increment the transaction ID on the state each time one is llocated.
-    // state->transaction_max++;
+    state->transaction_max++;
 
     TAILQ_INSERT_TAIL(&state->tx_list, tx, next);
 
     return tx;
-} */
+}
 
-/*
+
 static void DiameterTxFree(void *txv)
 {
-    DiameterState *d_state = (DiameterState *)txv;
+    DiameterTransaction *tx = (DiameterTransaction *)txv;
 
     AppLayerDecoderEventsFreeEvents(&tx->tx_data.events);
 
-    if (d_state->tx_data.de_state != NULL) {
-        DetectEngineStateFree(d_state->tx_data.de_state);
-    }
+    if (tx->request.start_pointer != NULL) 
+        SCFree(tx->request.start_pointer);
 
-    SCFree(d_state);
-} */
+    if (tx->response.start_pointer != NULL) 
+        SCFree(tx->response.start_pointer);
+
+    AppLayerDecoderEventsFreeEvents(&tx->tx_data.events);
+
+    SCFree(tx);
+}
 
 static void *DiameterStateAlloc(void *orig_state, AppProto proto_orig)
 {
@@ -132,18 +126,20 @@ static void *DiameterStateAlloc(void *orig_state, AppProto proto_orig)
     if (unlikely(state == NULL)) {
         return NULL;
     }
+    TAILQ_INIT(&state->tx_list);
     return state;
 }
+
 static void DiameterStateFree(void *state)
 {
     DiameterState *diameter_state = state;
-    // DiameterTransaction *tx;
+    DiameterTransaction *tx;
     SCLogNotice("Freeing diameter state.");
-    /*
+
     while ((tx = TAILQ_FIRST(&diameter_state->tx_list)) != NULL) {
         TAILQ_REMOVE(&diameter_state->tx_list, tx, next);
         DiameterTxFree(tx);
-    } */
+    } 
     SCFree(diameter_state);
 }
 
@@ -193,7 +189,10 @@ static AppProto DiameterProbingParser(Flow *f, uint8_t direction,
         return ALPROTO_UNKNOWN;
     }
 
-    if (input[0] == 0x01) {
+    // Xac dinh dua vao version cua diameter va 4 bit cuoi cua byte thu 5 (byte flags)
+    // Version duy nhat duoc ho tro hien nay la: 0x01
+    // 4 bit cuoi cua byte flags luon bang: 0
+    if (input[0] == 0x01 && ((input[4] << 4) == 0) ) {
         SCLogNotice("Detected as ALPROTO_DIAMETER");
         return ALPROTO_DIAMETER;
     }
@@ -206,7 +205,7 @@ static AppProto DiameterProbingParser(Flow *f, uint8_t direction,
 static AppLayerResult DiameterDecode(Flow *f, uint8_t direction, void *alstate,
         AppLayerParserState *pstate, StreamSlice stream_slice)
 {
-    DiameterState *d_state = (DiameterState *)alstate;
+    DiameterState *_state = (DiameterState *)alstate;
     const uint8_t *input = StreamSliceGetData(&stream_slice);
     uint32_t input_len = StreamSliceGetDataLen(&stream_slice);
     // const uint8_t flags = StreamSliceGetFlags(&stream_slice);
@@ -263,9 +262,26 @@ static AppLayerResult DiameterParseResponse(Flow *f, void *alstate, AppLayerPars
     return DiameterDecode(f, 1 /* toclient */, alstate, pstate, stream_slice);
 }
 
+// free transaction ung voi hop by hop id 
 static void DiameterStateTxFree(void *state, uint64_t tx_id)
 {
-    /* do nothing */
+    DiameterState *tmp = state;
+    DiameterTransaction *tx = NULL, *ttx;
+
+    SCLogNotice("Freeing transaction %"PRIu64, tx_id);
+
+    TAILQ_FOREACH_SAFE(tx, &tmp->tx_list, next, ttx) {
+
+        if (tx->tx_id != tx_id)
+            continue;
+
+        /* Remove and free the transaction. */
+        TAILQ_REMOVE(&tmp->tx_list, tx, next);
+        Test1TxFree(tx);
+        return;
+    }
+
+    SCLogNotice("Transaction %"PRIu64" not found.", tx_id);
 }
 
 static uint64_t DiameterGetTxCnt(void *statev)
@@ -296,8 +312,8 @@ static void *DiameterGetTx(void *state, uint64_t tx_id)
  */
 static AppLayerTxData *DiameterGetTxData(void *vtx)
 {
-    DiameterState *d_state = (DiameterState *)vtx;
-    return &d_state->tx_data;
+    DiameterTransaction *tx = (DiameterTransaction *)vtx;
+    return &tx->tx_data;
 }
 
 /**
@@ -307,6 +323,37 @@ static AppLayerStateData *DiameterGetStateData(void *vstate)
 {
     DiameterState *state = (DiameterState *)vstate;
     return &state->state_data;
+}
+
+void DiameterPacketInit(DiameterPacket *packet) {
+    DiameterPacket* tmp = SCCalloc(1,sizeof(DiameterPacket));
+    tmp->start_pointer = NULL;
+    packet = tmp;
+}
+/**
+ * Parse diameter packet
+ * Để đơn giản hiện tại chỉ parse header và coi như gói tin không bị phân mảnh
+*/
+DiameterPacket *ParseDiameterPacket(const uint8_t *input, uint32_t input_len) {
+    DiameterPacket* packet;
+    DiameterPacketInit(packet);
+
+    if (input_len < DIAMETER_MIN_FRAME_LEN) {
+        return packet;
+    }
+    packet->start_pointer = SCCalloc(1,input_len);
+
+    memcpy(packet->start_pointer, input, input_len);
+
+    packet->hdr_len = 20;;
+    packet->version =  (data){0,1};
+    packet->length = (data){1,3};
+    packet->flags_offset = 
+    message.CommandCode = data[5]*256*256 + data[6]*256 + data[7];
+    message.ApplicationId = data[8]*256*256*256 + data[9]*256*256 + data[10]*256 + data[11];
+    message.HopbyHopId = data[12]*256*256*256 + data[13]*256*256 + data[14]*256 + data[15];
+    message.EndtoEndId = data[16]*256*256*256 + data[17]*256*256 + data[18]*256 + data[19];
+    return message;
 }
 
 void RegisterDiameterParsers(void)

@@ -79,6 +79,7 @@
 #include "output-json-mqtt.h"
 #include "output-json-pgsql.h"
 #include "output-json-diameter.h"
+#include "output-json-test1.h"
 #include "output-json-template.h"
 #include "output-json-template-rust.h"
 #include "output-json-rdp.h"
@@ -1120,6 +1121,8 @@ void OutputRegisterLoggers(void)
     JsonPgsqlLogRegister();
     /* Diameter JSON logger. */
     JsonDiameterLogRegister();
+    /* Test1 JSON logger. */
+    JsonTest1LogRegister();
     /* Template JSON logger. */
     JsonTemplateLogRegister();
     /* Template Rust JSON logger. */

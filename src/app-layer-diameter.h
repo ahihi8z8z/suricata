@@ -26,47 +26,50 @@
 
 #include "rust.h"
 
-void RegisterDiameterParsers(void);
-void DiameterParserRegisterTests(void);
-
 enum {
     DIAMETER_FLAG_T = 0x10,
     DIAMETER_FLAG_E = 0x20,
     DIAMETER_FLAG_P = 0x40,
     DIAMETER_FLAG_R = 0x80,
 };
+typedef struct data__ {
+    uint8_t offset;
+    uint32_t len;
+} data;
 
-typedef struct DiameterMessage__ {
+typedef struct DiameterPacket__ {
     /*con tro chi den vi tri cua goi tin diameter trong buffer*/
     uint8_t *start_pointer;
     /*do dai header*/
-    uint32_t hdr_len;
-    /*Con tro den Version of Diameter */
-    uint8_t *Version;
-    /* Con tro den Diameter Length, để  kiểm tra data nhận được có dài đúng như header đọc được không*/
-    uint8_t *Length;
-    /* Diameter Flags - Khác của suricata */
-    uint8_t *Flags;
-    uint8_t *CommandCode;
-    uint8_t *ApplicationId;
-    uint8_t *HopbyHopId;
-    uint8_t *EndtoEndId;
-    /*Con tro den cac AVPs*/
-    uint8_t *Avps;
-} DiameterMessage;
-DiameterMessage ReadDiameterData(const uint8_t *data, uint32_t data_len);
+    uint8_t hdr_len;
+    /*Version of Diameter */
+    data version;
+    /*Diameter Length, để  kiểm tra data nhận được có dài đúng như header đọc được không*/
+    data length;
+    /*Diameter Flags - Khác của suricata */
+    data flags;
+    data commandCode;
+    data applicationId;
+    data hopbyHopId;
+    data endtoEndId;
+    /*AVPs*/
+    data avps_offset;
+} DiameterPacket;
+
 typedef struct DiameterTransaction
 {
+    AppLayerTxData tx_data;
 
-    DiameterMessage request;
-    DiameterMessage response;
+    DiameterPacket request;
+    DiameterPacket response;
+
+    uint32_t tx_id; // tx_id tuong ung voi hopbyhopid dac trung cho moi cap request-response 
     TAILQ_ENTRY(DiameterTransaction) next;
 
 } DiameterTransaction;
 
 typedef struct DiameterState {
     AppLayerStateData state_data;
-    AppLayerTxData tx_data;
 
     /** List of Diameter transactions associated with this
      *  state. */
@@ -75,7 +78,12 @@ typedef struct DiameterState {
     /** A count of the number of transactions created. The
      *  transaction ID for each transaction is allocated
      *  by incrementing this value. */
-    // uint64_t transaction_max;
+    uint64_t transaction_max;
 } DiameterState;
+
+void RegisterDiameterParsers(void);
+void DiameterParserRegisterTests(void);
+void DiameterPacketInit(DiameterPacket *packet);
+DiameterPacket* ParseDiameterPacket(const uint8_t *data, uint32_t data_len);
 
 #endif /* __APP_LAYER_DIAMETER_H__ */

@@ -156,6 +156,7 @@ outputs:
         header: X-Forwarded-For
 
       types:
+        - test1
         - diameter
         - alert:
             # payload: yes             # enable dumping payload in Base64
