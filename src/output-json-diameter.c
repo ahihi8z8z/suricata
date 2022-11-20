@@ -79,15 +79,15 @@ static int JsonDiameterLogger(ThreadVars *tv, void *thread_data,
     jb_open_object(js, "diameter");
 
     /* Log the request buffer. */
-    if (diametertx->data != NULL) {
-        jb_set_string_from_bytes(js, "request", diametertx->data,
-                diametertx->data_len);
+    if (diametertx->request.start_pointer != NULL) {
+        jb_set_string_from_bytes(js, "request", diametertx->request.start_pointer,
+                diametertx->request.hdr_len);
     }
 
     /* Log the response buffer. */
-    if (diametertx->data != NULL) {
-        jb_set_string_from_bytes(js, "response", diametertx->data,
-                diametertx->data_len);
+    if (diametertx->response.start_pointer != NULL) {
+        jb_set_string_from_bytes(js, "response", diametertx->response.start_pointer,
+                diametertx->response.hdr_len);
     }
 
     /* Close diameter. */

@@ -83,8 +83,9 @@ SCEnumCharMap diameter_decoder_event_table[] = {
 //     return result[point];
 // }
 
-
-
+static uint32_t BytesToInt32(uint8_t* bytes) {
+    return (uint32_t) (bytes[0] + (bytes[1] << 8) + (bytes[2] << 16) + (bytes[3] << 24));
+}
 
 static DiameterTransaction *DiameterTxAlloc(DiameterState *state)
 {
@@ -192,7 +193,7 @@ static AppProto DiameterProbingParser(Flow *f, uint8_t direction,
     // Xac dinh dua vao version cua diameter va 4 bit cuoi cua byte thu 5 (byte flags)
     // Version duy nhat duoc ho tro hien nay la: 0x01
     // 4 bit cuoi cua byte flags luon bang: 0
-    if (input[0] == 0x01 && ((input[4] << 4) == 0) ) {
+    if (input[0] == 0x01 /*&& ((input[4] << 4) == 0x0)*/ ) {
         SCLogNotice("Detected as ALPROTO_DIAMETER");
         return ALPROTO_DIAMETER;
     }
@@ -205,7 +206,7 @@ static AppProto DiameterProbingParser(Flow *f, uint8_t direction,
 static AppLayerResult DiameterDecode(Flow *f, uint8_t direction, void *alstate,
         AppLayerParserState *pstate, StreamSlice stream_slice)
 {
-    DiameterState *_state = (DiameterState *)alstate;
+    DiameterState *state = (DiameterState *)alstate;
     const uint8_t *input = StreamSliceGetData(&stream_slice);
     uint32_t input_len = StreamSliceGetDataLen(&stream_slice);
     // const uint8_t flags = StreamSliceGetFlags(&stream_slice);
@@ -214,14 +215,19 @@ static AppLayerResult DiameterDecode(Flow *f, uint8_t direction, void *alstate,
         ((direction == 0 && AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS)) ||
                 (direction == 1 &&
                         AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC)))) {
-        return APP_LAYER_OK;
+        goto end;
     } else if (input == NULL || input_len == 0) {
         return APP_LAYER_ERROR;
     }
 
+    
+
     /* Check có đúng là Diameter không */
-    DiameterMessageHeader diameter_header = ReadDiameterHeaderData(input, input_len);
-    if (diameter_header.Length != input_len) {
+    DiameterPacket* packet = NULL;
+    DiameterPacketInit(packet);
+
+    packet = ParseDiameterPacket(input, input_len);
+    if (BytesToInt32(packet->start_pointer + packet->length.offset) != input_len) {
         SCLogNotice("Bản tin Diameter nhận diện không đúng");
         return APP_LAYER_ERROR;
     }
@@ -229,24 +235,32 @@ static AppLayerResult DiameterDecode(Flow *f, uint8_t direction, void *alstate,
     // SCLogNotice("Transaction max=%"PRIu64, state->transaction_max);
 
     /* Tạo Tx cho bản tin này */
-    /*
-    DiameterTransaction *tx = DiameterTxAlloc(state);
-    if (unlikely(tx == NULL)) {
-        SCLogNotice("Failed to allocate new Diameter tx.");
-        goto end;
-    } */
 
-    /* Make a copy of the message. */
-    d_state->data = SCCalloc(1, input_len);
+    if (direction == 0) {
+        DiameterTransaction *tx = DiameterTxAlloc(state);
+        if (unlikely(tx == NULL)) {
+            SCLogNotice("Failed to allocate new Diameter tx.");
+            goto end;
+        }
+        tx->request = *packet;
+    } else if (direction == 1 ) {
+        DiameterTransaction *tx = NULL, *ttx;
+        TAILQ_FOREACH(ttx, &state->tx_list, next) 
+            tx = ttx;
+        if ( tx->request.start_pointer != NULL) {
+            tx->response = *packet;
+        }
+        goto end;
+    } else {
+        SCReturn(APP_LAYER_ERROR);
+    }
     /*
     if (unlikely(tx->data == NULL)) {
         goto end;
     }*/
 
-    memcpy(d_state->data, input, input_len);
-    d_state->data_len = input_len;
-
-    return APP_LAYER_OK;
+end:
+    SCReturn(APP_LAYER_OK);
 }
 
 static AppLayerResult DiameterParseRequest(Flow *f, void *alstate, AppLayerParserState *pstate,
@@ -277,7 +291,7 @@ static void DiameterStateTxFree(void *state, uint64_t tx_id)
 
         /* Remove and free the transaction. */
         TAILQ_REMOVE(&tmp->tx_list, tx, next);
-        Test1TxFree(tx);
+        DiameterTxFree(tx);
         return;
     }
 
@@ -326,9 +340,9 @@ static AppLayerStateData *DiameterGetStateData(void *vstate)
 }
 
 void DiameterPacketInit(DiameterPacket *packet) {
-    DiameterPacket* tmp = SCCalloc(1,sizeof(DiameterPacket));
+    DiameterPacket* tmp = packet;
+    tmp = SCCalloc(1,sizeof(DiameterPacket));
     tmp->start_pointer = NULL;
-    packet = tmp;
 }
 /**
  * Parse diameter packet
@@ -348,12 +362,12 @@ DiameterPacket *ParseDiameterPacket(const uint8_t *input, uint32_t input_len) {
     packet->hdr_len = 20;;
     packet->version =  (data){0,1};
     packet->length = (data){1,3};
-    packet->flags_offset = 
-    message.CommandCode = data[5]*256*256 + data[6]*256 + data[7];
-    message.ApplicationId = data[8]*256*256*256 + data[9]*256*256 + data[10]*256 + data[11];
-    message.HopbyHopId = data[12]*256*256*256 + data[13]*256*256 + data[14]*256 + data[15];
-    message.EndtoEndId = data[16]*256*256*256 + data[17]*256*256 + data[18]*256 + data[19];
-    return message;
+    packet->flags = (data){4,1};
+    packet->commandCode = (data){5,3};
+    packet->applicationId = (data){8,4};
+    packet->hopbyHopId = (data){12,4};
+    packet->endtoEndId = (data){16,4};
+    return packet;
 }
 
 void RegisterDiameterParsers(void)

@@ -53,7 +53,7 @@ typedef struct DiameterPacket__ {
     data hopbyHopId;
     data endtoEndId;
     /*AVPs*/
-    data avps_offset;
+    data avps;
 } DiameterPacket;
 
 typedef struct DiameterTransaction

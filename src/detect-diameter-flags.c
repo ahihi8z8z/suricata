@@ -201,7 +201,7 @@ static int DiameterFlagsMatch(DetectEngineThreadCtx *det_ctx,
     SCLogNotice("flagsmatch");
     SCEnter();
 
-    uint32_t flag = 0;
+    uint8_t flag = 0;
 
     const DiameterFlagsData *signFlags = (const DiameterFlagsData *)m;
     DiameterState *app_state = (DiameterState *)state;
@@ -211,7 +211,7 @@ static int DiameterFlagsMatch(DetectEngineThreadCtx *det_ctx,
     }
 
     DiameterTransaction *ttx = (DiameterTransaction*) txv;
-    flag =  (DiameterFlagsData)ttx->data[4];
+    flag =  (DiameterFlagsData) *(ttx->request.start_pointer + ttx->request.flags.offset);
     SCLogNotice("keyword value = %x, flag value in packet = %x", *signFlags, flag); 
     if (flag == *signFlags) {
         
